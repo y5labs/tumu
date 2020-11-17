@@ -5,6 +5,19 @@ const path = require('path')
 const child_process = require('child_process')
 const Git = require('nodegit')
 
+const TUMU_RETRY_DELAY_WINDOW =
+  process.env.TUMU_RETRY_DELAY_WINDOW
+  ? Number(process.env.TUMU_RETRY_DELAY_WINDOW)
+  : 3e5
+const TUMU_RETRY_DELAY_ESCALATION =
+  process.env.TUMU_RETRY_DELAY_ESCALATION
+  ? Number(process.env.TUMU_RETRY_DELAY_ESCALATION)
+  : 5e3
+const TUMU_RETRY_DELAY_LIMIT =
+  process.env.TUMU_RETRY_DELAY_LIMIT
+  ? Number(process.env.TUMU_RETRY_DELAY_LIMIT)
+  : 6e4
+
 const is_dir = async dir_path => {
   try {
     const stat = await fs.lstat(dir_path)
@@ -140,9 +153,11 @@ module.exports = (spec, port, hub) => {
         if (code > 0 && state_level == 4) {
           const now = Math.floor(new Date().getTime() / 1000)
           // TODO: Turn these constants into ENVs
-          if (last_fail > now - 3e5) restart_delay += 5000
-          else restart_delay = 0
-          restart_delay = Math.min(restart_delay, 6e4)
+          if (last_fail > now - TUMU_RETRY_DELAY_WINDOW)
+            restart_delay += TUMU_RETRY_DELAY_ESCALATION
+          else
+            restart_delay = 0
+          restart_delay = Math.min(restart_delay, TUMU_RETRY_DELAY_LIMIT)
           last_fail = now
           console.log(spec.name, `exit(${code}). Waiting ${restart_delay / 1000}s`)
           handle = setTimeout(() => {

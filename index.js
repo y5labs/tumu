@@ -6,6 +6,16 @@ const diff_specs = require('./diff_specs')
 const engine = require('./engine')
 const SparseArray = require('seacreature/analytics/sparsearray')
 const Hub = require('seacreature/lib/hub')
+const path = require('path')
+
+const TUMU_PORT_START =
+  process.env.TUMU_PORT_START
+  ? Number(process.env.TUMU_PORT_START)
+  : 8080
+const TUMU_SPECIFICATION_REFRESH =
+  process.env.TUMU_SPECIFICATION_REFRESH
+  ? Number(process.env.TUMU_SPECIFICATION_REFRESH)
+  : 3e5
 
 const get = async url => {
   if (url.startsWith('http')) {
@@ -13,7 +23,8 @@ const get = async url => {
     if (!res.ok) throw 'Non 200 response'
     return await res.text()
   }
-  return await fs.readFile(url, 'utf8')
+  const file_path = path.resolve(process.cwd(), url)
+  return await fs.readFile(file_path, 'utf8')
 }
 
 const parse = async content => {
@@ -25,7 +36,7 @@ module.exports = async url => {
   if (!url) url = process.env.TUMU_SPECIFICATION
 
   const port_pool = new SparseArray()
-  const port_start = Number(process.env.TUMU_PORT_START) || 8080
+  const port_start = TUMU_PORT_START
   const hub = Hub()
 
   const apps_mutex = mutex()
@@ -129,6 +140,6 @@ module.exports = async url => {
   //     app.check_changes()
   // }, 10000)
 
-  setInterval(load, Number(process.env.TUMU_REFRESH) || 3e5)
+  setInterval(load, Number(TUMU_SPECIFICATION_REFRESH))
 }
 
