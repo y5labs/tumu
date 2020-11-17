@@ -1,0 +1,21 @@
+{
+  "name": "tumu",
+  "version": "2.0.0",
+  "main": "index.js",
+  "repository": "git@github.com:tcoats/tumu.git",
+  "author": "Thomas Coats <thomas@y5.nz>",
+  "license": "MIT",
+  "bin": {
+    "tumu": "cli.js"
+  },
+  "dependencies": {
+    "commander": "^3.0.1",
+    "dotenv": "^8.1.0",
+    "neo-blessed": "^0.2.0",
+    "node-fetch": "^2.6.1",
+    "nodegit": "^0.27.0",
+    "seacreature": "file:../seacreature",
+    "sshpk": "^1.16.1",
+    "telnet2": "^0.0.1"
+  }
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "tumu-deploy-webhook",
+    "domains": ["deploy-webhook.thomascoats.com"],
+    "repo": "git@github.com:y5labs/tumu-deploy-webhook.git",
+    "branch": "main",
+    "env": {
+      "GITHUB_WEBHOOK_SECRET": "XYZ",
+      "GITHUB_WEBHOOK_URL": "/"
+    }
+  }
+]

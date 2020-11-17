@@ -1,0 +1,134 @@
+const fetch = require('node-fetch')
+const fs = require('fs').promises
+const { decrypt } = require('./lib/crypto')
+const mutex = require('seacreature/lib/mutex')
+const diff_specs = require('./diff_specs')
+const engine = require('./engine')
+const SparseArray = require('seacreature/analytics/sparsearray')
+const Hub = require('seacreature/lib/hub')
+
+const get = async url => {
+  if (url.startsWith('http')) {
+    const res = await fetch(url)
+    if (!res.ok) throw 'Non 200 response'
+    return await res.text()
+  }
+  return await fs.readFile(url, 'utf8')
+}
+
+const parse = async content => {
+  if (content[0] == '[') return JSON.parse(content)
+  return JSON.parse(await decrypt(content))
+}
+
+module.exports = async url => {
+  if (!url) url = process.env.TUMU_SPECIFICATION
+
+  const port_pool = new SparseArray()
+  const port_start = Number(process.env.TUMU_PORT_START) || 8080
+  const hub = Hub()
+
+  const apps_mutex = mutex()
+  let specs = []
+
+  const apps = new Map()
+
+  hub.on('check_changes', ({ repo, branch }) => {
+    for (const app of apps.values()) {
+      const spec = app.spec()
+      if (spec.repo == repo && spec.branch == branch)
+        app.check_changes()
+    }
+  })
+
+  const load = async () => {
+    const release = await apps_mutex.acquire()
+    let new_specs = null
+    try {
+      new_specs = await parse((await get(url)).trim())
+    }
+    catch (e) {
+      console.error(`Unable to read specifications from ${url}`, e)
+      return release()
+    }
+
+    try {
+      const actions = diff_specs(specs, new_specs)
+      specs = new_specs
+      for (const [key, spec] of actions.delete.entries()) {
+        const app = apps.get(key)
+        port_pool.remove(app.port - port_start)
+        app.terminate()
+        apps.delete(key)
+      }
+      for (const [key, spec] of actions.create.entries())
+        apps.set(key, engine(
+          spec,
+          port_start + port_pool.add(spec.name),
+          hub
+        ))
+      for (const [key, specs] of actions.change_repo.entries()) {
+        const app = apps.get(key)
+        app.set_spec(specs[1])
+        app.get_code()
+      }
+      for (const [key, specs] of actions.change_env.entries()) {
+        const app = apps.get(key)
+        app.set_spec(specs[1])
+        app.restart()
+      }
+      for (const [key, specs] of actions.change_domains.entries())
+        apps.get(key).set_spec(specs[1])
+      if (actions.change_domains.size > 0
+        || actions.create.size > 0
+        || actions.delete.size > 0) {
+        const reverse_proxies = new Map()
+        for (const app of apps.values()) {
+          const spec = app.spec()
+          if (!spec.domains) return
+          reverse_proxies.set(app.port, spec.domains)
+        }
+        try {
+          const res = await fetch('http://localhost:2019/load', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apps: { http: { servers: { srv0: {
+              listen: [':443'],
+              routes: Array.from(reverse_proxies.entries(), ([port, domains]) => ({
+                handle: [{
+                  handler: 'reverse_proxy',
+                  upstreams: [{ dial: `127.0.0.1:${port}` }]
+                }],
+                match: [{ host: domains }],
+                terminal: true
+              }))
+            } } } } })
+          })
+          if (!res.ok) {
+            console.error('Unable to update caddy', await res.text())
+            return release()
+          }
+        }
+        catch (e) {
+          console.error('Unable to update caddy', e)
+          return release()
+        }
+      }
+    }
+    catch (e) {
+      console.error('Trouble applying new specifications', e)
+      return release()
+    }
+
+    release()
+  }
+  await load()
+
+  // setInterval(() => {
+  //   for (const app of apps.values())
+  //     app.check_changes()
+  // }, 10000)
+
+  setInterval(load, Number(process.env.TUMU_REFRESH) || 3e5)
+}
+
