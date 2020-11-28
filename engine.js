@@ -121,6 +121,10 @@ module.exports = (spec, port, hub) => {
           })
           npmi.stdout.on('data', data => process.stdout.write(data))
           npmi.stderr.on('data', data => process.stderr.write(data))
+          npmi.stdout.on('data', data =>
+            hub.emit('worker.stdout', { spec, data }))
+          npmi.stderr.on('data', data =>
+            hub.emit('worker.stderr', { spec, data }))
           npmi.on('exit', code => code == 0 ? resolve() : reject())
         })
         return 'run'
@@ -141,11 +145,13 @@ module.exports = (spec, port, hub) => {
         stderr: true
       })
       // TODO: Prefix lines? Stream elsewhere?
-      worker.stdout.on('data', data => process.stdout.write(data))
-      worker.stderr.on('data', data => process.stderr.write(data))
+      worker.stdout.on('data', data =>
+        hub.emit('worker.stdout', { spec, data }))
+      worker.stderr.on('data', data =>
+        hub.emit('worker.stderr', { spec, data }))
       worker.on('message', msg => {
         const { e, p } = JSON.parse(msg)
-        hub.emit(e, p)
+        hub.emit(e, { worker, spec, ...p })
       })
       worker.on('error', e => console.error(spec.name, e))
       worker.on('exit', async code => {

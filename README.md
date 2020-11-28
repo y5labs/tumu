@@ -21,6 +21,8 @@
 
 # Todo
 
-- Caddy2 log tail
 - Seacreature logs
 - Update strategies: rolling, recreate
+- Upgrade whole app
+- Run using npx?
+https://caddyserver.com/docs/install

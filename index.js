@@ -37,6 +37,9 @@ module.exports = async url => {
 
   const port_pool = new SparseArray()
   const port_start = TUMU_PORT_START
+  let caddy_log_port = null
+  let caddy_refresh = false
+
   const hub = Hub()
 
   const apps_mutex = mutex()
@@ -50,6 +53,18 @@ module.exports = async url => {
       if (spec.repo == repo && spec.branch == branch)
         app.check_changes()
     }
+  })
+
+  hub.on('enable_caddy_logging', ({ port }) => {
+    // TODO: Detect when the instance is restarted and remove?
+    caddy_log_port = port
+    caddy_refresh = true
+    load()
+  })
+
+  hub.on('subscribe_logs', ({ worker, spec }) => {
+    // register as a handler so all logs go to this instance
+    // TODO: Detect when the instance is restarted and remove?
   })
 
   const load = async () => {
@@ -92,28 +107,42 @@ module.exports = async url => {
         apps.get(key).set_spec(specs[1])
       if (actions.change_domains.size > 0
         || actions.create.size > 0
-        || actions.delete.size > 0) {
+        || actions.delete.size > 0
+        || caddy_refresh) {
+        caddy_refresh = false
         const reverse_proxies = new Map()
         for (const app of apps.values()) {
           const spec = app.spec()
-          if (!spec.domains) return
+          if (!spec.domains) continue
           reverse_proxies.set(app.port, spec.domains)
         }
         try {
+
           const res = await fetch('http://localhost:2019/load', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ apps: { http: { servers: { srv0: {
-              listen: [':443'],
-              routes: Array.from(reverse_proxies.entries(), ([port, domains]) => ({
-                handle: [{
-                  handler: 'reverse_proxy',
-                  upstreams: [{ dial: `127.0.0.1:${port}` }]
-                }],
-                match: [{ host: domains }],
-                terminal: true
-              }))
-            } } } } })
+            body: JSON.stringify({
+              ...(caddy_log_port ? {
+                logging: { logs: {
+                  default: {
+                    writer: { output: 'net', address: `:${caddy_log_port}` },
+                    encoder: { format: 'json' },
+                    level: 'INFO'
+                  }
+                } }
+              } : {}),
+              apps: { http: { servers: { srv0: {
+                listen: [':443'],
+                routes: Array.from(reverse_proxies.entries(), ([port, domains]) => ({
+                  handle: [{
+                    handler: 'reverse_proxy',
+                    upstreams: [{ dial: `127.0.0.1:${port}` }]
+                  }],
+                  match: [{ host: domains }],
+                  terminal: true
+                }))
+              } } } }
+            })
           })
           if (!res.ok) {
             console.error('Unable to update caddy', await res.text())
