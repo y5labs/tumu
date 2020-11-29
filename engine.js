@@ -53,11 +53,17 @@ module.exports = (spec, port, hub) => {
     worker = null
   }
 
+  const set_state = (new_state, e) => {
+    state = new_state
+    hub.emit('worker.state', { spec, state })
+  }
+  const emit_log = data => hub.emit('worker.stdout', { spec, data })
+  const emit_error = data => hub.emit('worker.stderr', { spec, data })
+
   const actions = {
     get_code: async () => {
       state_level = 1
-      state = 'getting_code'
-      console.log(spec.name, 'getting_code')
+      set_state('getting_code')
       try {
         repo = await (async () => {
           if (await is_dir(dir_path)) {
@@ -68,7 +74,7 @@ module.exports = (spec, port, hub) => {
               return repo
             }
             catch (e) {
-              console.log(spec.name, 'No existing repo or repo not correct, cloning.', e)
+              emit_log('No existing repo or repo not correct, cloning.')
             }
           }
           await fs.rmdir(dir_path, { recursive: true })
@@ -78,17 +84,17 @@ module.exports = (spec, port, hub) => {
         return 'get_latest'
       }
       catch (e) {
-        state = 'could_not_get_code'
-        console.error(spec.name, 'could_not_get_code', e)
+        emit_error(e)
+        set_state('could_not_get_code')
       }
     },
     get_latest: async () => {
       state_level = 2
-      state = 'getting_latest'
-      console.log(spec.name, 'getting_latest')
+      set_state('getting_latest')
       try {
         let prev_commit_id = await repo.getHeadCommit()
-        await Git.Reset.reset(repo, prev_commit_id, Git.Reset.TYPE.HARD)
+        if (process.env.NODE_ENV != 'development')
+          await Git.Reset.reset(repo, prev_commit_id, Git.Reset.TYPE.HARD)
         await repo.fetchAll({ callbacks: authCallbacks })
         if ((await repo.getCurrentBranch()).name() != `refs/heads/${spec.branch}`) {
           const branch = await repo.createBranch(spec.branch, prev_commit_id, true)
@@ -103,14 +109,13 @@ module.exports = (spec, port, hub) => {
         return 'install_dependencies'
       }
       catch (e) {
-        state = 'could_not_get_latest'
-        console.error(spec.name, 'could_not_get_latest', e)
+        emit_error(e)
+        set_state('could_not_get_latest')
       }
     },
     install_dependencies: async () => {
       state_level = 3
-      state = 'installing_dependencies'
-      console.log(spec.name, 'installing_dependencies')
+      set_state('installing_dependencies')
       try {
         pjson = await fs.readFile(path.join(dir_path, 'package.json'), 'utf8')
         pjson = JSON.parse(pjson)
@@ -119,75 +124,68 @@ module.exports = (spec, port, hub) => {
           const npmi = child_process.spawn('npm', ['i', '--production', '-s'], {
             cwd: dir_path
           })
-          npmi.stdout.on('data', data => process.stdout.write(data))
-          npmi.stderr.on('data', data => process.stderr.write(data))
           npmi.stdout.on('data', data =>
-            hub.emit('worker.stdout', { spec, data }))
+            hub.emit('worker.stdout', { spec, data: data.toString() }))
           npmi.stderr.on('data', data =>
-            hub.emit('worker.stderr', { spec, data }))
+            hub.emit('worker.stderr', { spec, data: data.toString() }))
           npmi.on('exit', code => code == 0 ? resolve() : reject())
         })
         return 'run'
       }
       catch (e) {
-        state = 'could_not_install_dependencies'
-        console.error(spec.name, 'could_not_install_dependencies', e)
+        emit_error(e)
+        set_state('could_not_install_dependencies')
       }
     },
     run: async () => {
       await kill()
       state_level = 4
-      state = 'running'
-      console.log(spec.name, 'running')
+      set_state('running')
       worker = new Worker(path.join(dir_path, pjson.main), {
         env: { PORT: port, ...spec.env },
         stdout: true,
         stderr: true
       })
-      // TODO: Prefix lines? Stream elsewhere?
       worker.stdout.on('data', data =>
-        hub.emit('worker.stdout', { spec, data }))
+        hub.emit('worker.stdout', { spec, data: data.toString() }))
       worker.stderr.on('data', data =>
-        hub.emit('worker.stderr', { spec, data }))
+        hub.emit('worker.stderr', { spec, data: data.toString() }))
       worker.on('message', msg => {
         const { e, p } = JSON.parse(msg)
         hub.emit(e, { worker, spec, ...p })
       })
-      worker.on('error', e => console.error(spec.name, e))
+      worker.on('error', e => emit_error(e))
       worker.on('exit', async code => {
         worker = null
         if (code > 0 && state_level == 4) {
           const now = Math.floor(new Date().getTime() / 1000)
-          // TODO: Turn these constants into ENVs
           if (last_fail > now - TUMU_RETRY_DELAY_WINDOW)
             restart_delay += TUMU_RETRY_DELAY_ESCALATION
           else
             restart_delay = 0
           restart_delay = Math.min(restart_delay, TUMU_RETRY_DELAY_LIMIT)
           last_fail = now
-          console.log(spec.name, `exit(${code}). Waiting ${restart_delay / 1000}s`)
+          emit_error(`exit(${code}). Waiting ${restart_delay / 1000}s`)
           handle = setTimeout(() => {
             if (state == 'stopped') exec('run')
           }, restart_delay)
         }
-        else console.log(spec.name, `exit(${code}). Waiting for changes.`)
+        else emit_error(`exit(${code}). Waiting for changes.`)
         if (state_level == 4) {
           state_level = 5
-          state = 'stopped'
+          set_state('stopped')
         }
       })
     },
     restart: async () => {
       state_level = 3
-      state = 'restarting'
-      console.log(spec.name, 'restarting')
+      set_state('restarting')
       await kill()
       last_fail = 0
       return 'run'
     },
     check_changes: async () => {
-      state = 'check_changes'
-      console.log(spec.name, 'check_changes')
+      set_state('check_changes')
       try {
         let prev_commit_id = await repo.getHeadCommit()
         await Git.Reset.reset(repo, prev_commit_id, Git.Reset.TYPE.HARD)
@@ -207,14 +205,14 @@ module.exports = (spec, port, hub) => {
           return 'install_dependencies'
       }
       catch (e) {
-        console.error(spec.name, 'could_not_check_changes', e)
+        emit_error(e)
+        set_state('could_not_check_changes')
       }
-      state = 'running'
+      set_state('running')
     },
     terminate: async () => {
       state_level = -1
-      state = 'terminating'
-      console.log(spec.name, 'terminating')
+      set_state('terminating')
       await kill()
     }
   }
@@ -243,7 +241,7 @@ module.exports = (spec, port, hub) => {
   return {
     spec: () => spec,
     port,
-    state,
+    state: () => state,
     set_spec: next_spec => spec = next_spec,
     get_code: () => {
       if (state_level <= 0) return

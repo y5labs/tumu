@@ -55,16 +55,38 @@ module.exports = async url => {
     }
   })
 
+  // TODO: Detect when the instance is restarted and remove?
   hub.on('enable_caddy_logging', ({ port }) => {
-    // TODO: Detect when the instance is restarted and remove?
     caddy_log_port = port
     caddy_refresh = true
     load()
   })
 
-  hub.on('subscribe_logs', ({ worker, spec }) => {
-    // register as a handler so all logs go to this instance
-    // TODO: Detect when the instance is restarted and remove?
+  // TODO: Detect when the instance is restarted and remove?
+  hub.on('subscribe_stdout', ({ worker, spec }) => {
+    hub.on('worker.stdout', p => {
+      worker.postMessage(JSON.stringify({ e: 'worker.stdout', p }))
+    })
+  })
+
+  // TODO: Detect when the instance is restarted and remove?
+  hub.on('subscribe_stderr', ({ worker, spec }) => {
+    hub.on('worker.stderr', p => {
+      worker.postMessage(JSON.stringify({ e: 'worker.stderr', p }))
+    })
+  })
+
+  // TODO: Detect when the instance is restarted and remove?
+  hub.on('subscribe_state', ({ worker, spec }) => {
+    for (const app of apps.values()) {
+      worker.postMessage(JSON.stringify({ e: 'worker.state', p: {
+        spec: app.spec(),
+        state: app.state()
+      } }))
+    }
+    hub.on('worker.state', p => {
+      worker.postMessage(JSON.stringify({ e: 'worker.state', p }))
+    })
   })
 
   const load = async () => {

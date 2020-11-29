@@ -26,3 +26,7 @@
 - Upgrade whole app
 - Run using npx?
 https://caddyserver.com/docs/install
+https://getpino.io/#/ vs https://github.com/rvagg/bole
+ndjson logs / events
+pull vs push
+https://github.com/lrlna/pino-colada
