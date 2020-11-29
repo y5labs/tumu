@@ -14,7 +14,7 @@
     "neo-blessed": "^0.2.0",
     "node-fetch": "^2.6.1",
     "nodegit": "^0.27.0",
-    "seacreature": "file:../seacreature",
+    "seacreature": "^2.8.1",
     "sshpk": "^1.16.1",
     "telnet2": "^0.0.1"
   }
