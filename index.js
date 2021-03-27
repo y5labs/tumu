@@ -1,12 +1,14 @@
 const fetch = require('node-fetch')
 const fs = require('fs').promises
-const { decrypt } = require('./lib/crypto')
-const mutex = require('seacreature/lib/mutex')
-const diff_specs = require('./diff_specs')
-const engine = require('./engine')
-const SparseArray = require('seacreature/analytics/sparsearray')
-const Hub = require('seacreature/lib/hub')
 const path = require('path')
+const SparseArray = require('seacreature/analytics/sparsearray')
+const mutex = require('seacreature/lib/mutex')
+const pathie = require('seacreature/lib/pathie')
+const Hub = require('seacreature/lib/hub')
+const { decrypt } = require('./lib/crypto')
+const diff_specs = require('./diff_specs')
+const diff_proxies = require('./diff_proxies')
+const engine = require('./engine')
 
 const TUMU_PORT_START =
   process.env.TUMU_PORT_START
@@ -25,6 +27,12 @@ const get = async url => {
   }
   const file_path = path.resolve(process.cwd(), url)
   return await fs.readFile(file_path, 'utf8')
+}
+
+const fetch_get = async url => {
+  const res = await fetch(url)
+  if (!res.ok) return null
+  return await res.json()
 }
 
 const parse = async content => {
@@ -132,44 +140,85 @@ module.exports = async url => {
         || actions.delete.size > 0
         || caddy_refresh) {
         caddy_refresh = false
-        const reverse_proxies = new Map()
+        const proxies_next = new Map()
         for (const app of apps.values()) {
           const spec = app.spec()
           if (!spec.domains) continue
-          reverse_proxies.set(app.port, spec.domains)
+          proxies_next.set(spec.name, {
+            name: spec.name,
+            port: app.port,
+            domains: spec.domains
+          })
         }
         try {
-
-          const res = await fetch('http://localhost:2019/load', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ...(caddy_log_port ? {
-                logging: { logs: {
-                  default: {
-                    writer: { output: 'net', address: `:${caddy_log_port}` },
-                    encoder: { format: 'json' },
-                    level: 'INFO'
-                  }
-                } }
-              } : {}),
-              apps: { http: { servers: { srv0: {
-                listen: [':443'],
-                routes: Array.from(reverse_proxies.entries(), ([port, domains]) => ({
-                  handle: [{
-                    handler: 'reverse_proxy',
-                    upstreams: [{ dial: `127.0.0.1:${port}` }]
-                  }],
-                  match: [{ host: domains }],
-                  terminal: true
-                }))
-              } } } }
-            })
-          })
-          if (!res.ok) {
-            console.error('Unable to update caddy', await res.text())
-            return release()
+          let tumu_config = await fetch_get('http://localhost:2019/id/tumu/')
+          if (!tumu_config) {
+            tumu_config = {
+              '@id': 'tumu',
+              listen: [':443'],
+              routes: []
+            }
+            let config = await fetch_get('http://localhost:2019/config/')
+            if (!config || !pathie.get(config, ['apps', 'http', 'servers', 'tumu'])) {
+              config = { apps: { http: { servers: { tumu: tumu_config }}}}
+              await fetch('http://localhost:2019/load', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+              })
+            }
           }
+
+          const proxies_prev = tumu_config.routes
+            .filter(r => r['@id'] && r['@id'].startsWith('tumu_'))
+            .reduce((map, r) => {
+              const name = r['@id'].slice(5)
+              map.set(name, {
+                name: name,
+                port: r.handle[0].upstreams[0].dial.split(':')[1],
+                domains: r.match[0].host
+              })
+              return map
+            }, new Map())
+
+          const diff = diff_proxies(proxies_prev, proxies_next)
+
+          const gen_route = r => ({
+            '@id': `tumu_${r.name}`,
+            handle: [{
+              handler: 'reverse_proxy',
+              upstreams: [{ dial: `127.0.0.1:${r.port}` }]
+            }],
+            match: [{ host: r.domains }],
+            terminal: true
+          })
+
+          const changes = [
+            Array.from(diff.create.values(), r =>
+              fetch('http://localhost:2019/id/tumu/routes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(gen_route(r))
+              })),
+            Array.from(diff.update.values(), r =>
+              fetch(`http://localhost:2019/id/tumu_${r[1].name}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(gen_route(r[1]))
+              })),
+            Array.from(diff.delete.values(), r =>
+              fetch(`http://localhost:2019/id/tumu_${r.name}`, {
+                method: 'DELETE' }))
+          ].flat()
+
+          if (changes.length > 0)
+            console.log(JSON.stringify({
+              create: Object.fromEntries(diff.create.entries()),
+              update: Object.fromEntries(diff.update.entries()),
+              delete: Object.fromEntries(diff.delete.entries())
+            }, null, 2))
+
+          await Promise.all(changes)
         }
         catch (e) {
           console.error('Unable to update caddy', e)
