@@ -1,21 +1,34 @@
 {
   "name": "tumu",
-  "version": "2.0.1",
+  "version": "1.0.0",
   "main": "index.js",
-  "repository": "git@github.com:tcoats/tumu.git",
-  "author": "Thomas Coats <thomas@y5.nz>",
-  "license": "MIT",
-  "bin": {
-    "tumu": "cli.js"
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon -e js index.js"
   },
+  "author": "",
+  "license": "ISC",
+  "description": "",
   "dependencies": {
-    "commander": "^3.0.1",
-    "dotenv": "^8.1.0",
-    "neo-blessed": "^0.2.0",
-    "node-fetch": "^2.6.1",
-    "nodegit": "^0.27.0",
-    "seacreature": "^2.8.1",
-    "sshpk": "^1.16.1",
-    "telnet2": "^0.0.1"
+    "@koa/cors": "^5.0.0",
+    "@koa/router": "^12.0.1",
+    "base32-encode": "^2.0.0",
+    "dotenv": "^16.4.5",
+    "http-mutunga": "^2.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "koa": "^2.15.3",
+    "koa-body": "^6.0.1",
+    "koa-compress": "^5.1.1",
+    "koa-conditional-get": "^3.0.0",
+    "koa-etag": "^4.0.0",
+    "koa-helmet": "^7.0.2",
+    "koa-json": "^2.0.2",
+    "koa-logger": "^3.2.1",
+    "koa-response-time": "^2.1.0",
+    "koa-static": "^5.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
   }
 }
